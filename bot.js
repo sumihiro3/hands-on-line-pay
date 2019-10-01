@@ -3,7 +3,7 @@
 // .env ファイルから環境変数の設定値を取得する
 require("dotenv").config();
 
-// Import packages.
+// 必要なモジュールをインポート
 const express = require("express");
 const app = express();
 const uuid = require("uuid/v4");
@@ -19,7 +19,6 @@ const line_pay = require("line-pay");
 const pay = new line_pay({
     channelId: process.env.LINE_PAY_CHANNEL_ID,
     channelSecret: process.env.LINE_PAY_CHANNEL_SECRET,
-    hostname: process.env.LINE_PAY_HOSTNAME,
     isSandbox: true
 })
 
@@ -40,15 +39,20 @@ app.post("/webhook", bot_middleware, (req, res, next) => {
 
     req.body.events.map((event) => {
         // 接続確認の場合は無視する
-        if (event.replyToken == "00000000000000000000000000000000" || event.replyToken == "ffffffffffffffffffffffffffffffff") return;
+        console.log(`Event: ${JSON.stringify(event)}`);
+        if (event.replyToken == "00000000000000000000000000000000" || event.replyToken == "ffffffffffffffffffffffffffffffff") {
+            console.log(`Had Connection check!!`);
+            return;
+        }
 
         // "チョコレート"と言ってきたら決済を始める
-        if (event.type === "message"){
-            if (event.message.text === PRODUCT_NAME){
+        if (event.type === "message") {
+            if (event.message.text === PRODUCT_NAME) {
                 let product_name = PRODUCT_NAME;
                 let reservation = {
                     productName: product_name,
-                    amount: 1,
+                    productImageUrl: "https://2.bp.blogspot.com/-zEtBQS9hTfI/UZRBlbbtP8I/AAAAAAAASqE/vbK1D7YCNyU/s400/valentinesday_itachoco2.png",
+                    amount: 10,
                     currency: "JPY",
                     orderId: uuid(),
                     confirmUrl: process.env.LINE_PAY_CONFIRM_URL,
@@ -63,18 +67,81 @@ app.post("/webhook", bot_middleware, (req, res, next) => {
                     console.log(reservation);
                     // 注文情報としてDBに保存する
                     cache.put(response.info.transactionId, reservation);
-
                     // LINE Pay 決済用メッセージをリプライ送信する
-                    let message = {
-                        type: "template",
-                        altText: `${product_name}を購入するには下記のボタンで決済に進んでください`,
-                        template: {
-                            type: "buttons",
-                            text: `${product_name}を購入するには下記のボタンで決済に進んでください`,
-                            actions: [
-                                {type: "uri", label: "LINE Payで決済", uri: response.info.paymentUrl.web},
+                    let messageText = PRODUCT_NAME + "を購入するには下記のボタンで決済に進んでください";
+                    let bubble = {
+                        "type": "bubble",
+                        "hero": {
+                            "type": "image",
+                            "url": "https://2.bp.blogspot.com/-zEtBQS9hTfI/UZRBlbbtP8I/AAAAAAAASqE/vbK1D7YCNyU/s400/valentinesday_itachoco2.png",
+                            "size": "4xl",
+                            "aspectRatio": "1:1",
+                            "aspectMode": "cover"
+                        },
+                        "body": {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#f4f4f4",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": PRODUCT_NAME,
+                                    "weight": "bold",
+                                    "size": "xl"
+                                },
+                                {
+                                    "type": "box",
+                                    "layout": "vertical",
+                                    "margin": "lg",
+                                    "spacing": "sm",
+                                    "contents": [
+                                        {
+                                            "type": "box",
+                                            "layout": "baseline",
+                                            "spacing": "sm",
+                                            "contents": [
+                                                {
+                                                    "type": "text",
+                                                    "text": messageText,
+                                                    "wrap": true,
+                                                    "color": "#666666",
+                                                    "size": "sm",
+                                                    "flex": 5
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
                             ]
+                        },
+                        "footer": {
+                            "type": "box",
+                            "layout": "vertical",
+                            "spacing": "sm",
+                            "backgroundColor": "#f4f4f4",
+                            "contents": [
+                                {
+                                    "type": "button",
+                                    "style": "primary",
+                                    "height": "sm",
+                                    "action": {
+                                        "type": "uri",
+                                        "label": "LINE Payで決済",
+                                        "uri": response.info.paymentUrl.web
+                                    }
+                                },
+                                {
+                                    "type": "spacer",
+                                    "size": "sm"
+                                }
+                            ],
+                            "flex": 0
                         }
+                    }
+                    let message = {
+                        "type": "flex",
+                        "altText": messageText,
+                        "contents": bubble
                     }
                     return bot_client.replyMessage(event.replyToken, message);
                 });
@@ -85,14 +152,14 @@ app.post("/webhook", bot_middleware, (req, res, next) => {
 
 // ユーザーが決済を認証した時に、APIからのWebhookで実行される関数
 app.get("/pay/confirm", (req, res, next) => {
-    if (!req.query.transactionId){
+    if (!req.query.transactionId) {
         console.log("Transaction Id not found.");
         return res.status(400).send("Transaction Id not found.");
     }
 
     // 注文情報をDBから取得する
     let reservation = cache.get(req.query.transactionId);
-    if (!reservation){
+    if (!reservation) {
         console.log("Reservation not found.");
         return res.status(400).send("Reservation not found.")
     }
@@ -111,15 +178,52 @@ app.get("/pay/confirm", (req, res, next) => {
     return pay.confirm(confirmation).then((response) => {
         res.sendStatus(200);
 
-        // 決済完了をユーザーに返す
-        let messages = [{
-            type: "sticker",
-            packageId: 2,
-            stickerId: 144
-        },{
-            type: "text",
-            text: "ありがとうございます！" + PRODUCT_NAME + "の決済が完了しました。"
-        }]
-        return bot_client.pushMessage(reservation.userId, messages);
+        // 決済完了メッセージをユーザーに返す
+        let messageText = "ありがとうございます！" + PRODUCT_NAME + "の決済が完了しました。";
+        let bubble = {
+            "type": "bubble",
+            "hero": {
+                "type": "image",
+                "url": "https://3.bp.blogspot.com/-nrwPWwcAaOA/VRE4WqEKBSI/AAAAAAAAsV0/8D61LcHzjAk/s400/aisatsu_arigatou.png",
+                "size": "4xl",
+                "aspectRatio": "330:400",
+                "aspectMode": "cover"
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#f4f4f4",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "margin": "lg",
+                        "spacing": "sm",
+                        "contents": [
+                            {
+                                "type": "box",
+                                "layout": "baseline",
+                                "spacing": "sm",
+                                "contents": [
+                                    {
+                                        "type": "text",
+                                        "text": messageText,
+                                        "wrap": true,
+                                        "color": "#000000",
+                                        "size": "xl",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        let message = {
+            "type": "flex",
+            "altText": messageText,
+            "contents": bubble
+        }
+        return bot_client.pushMessage(reservation.userId, message);
     });
 });
