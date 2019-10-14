@@ -1,1 +1,2 @@
-"# hands-on-line-pay" 
+# LINE Pay hands-on sample program for V3
+
